@@ -1,5 +1,7 @@
 import express from "express";
 import { graphqlHTTP } from "express-graphql";
+import webpush from "web-push";
+import bodyParser from "body-parser";
 import {
   GraphQLInt,
   GraphQLList,
@@ -8,12 +10,33 @@ import {
   GraphQLString,
   GraphQLNonNull,
 } from "graphql";
-import { argsToArgsConfig } from "graphql/type/definition";
-import { type } from "os";
-import { resolve } from "path";
+
+const { Pool, Client } = require("pg");
+
+var cors = require("cors");
 
 const app = express();
-const PORT = 3000;
+
+const PORT = 3002;
+app.use(bodyParser.json());
+app.use(cors());
+//db Connction
+
+const client = new Client({
+  user: "kbrgavtx",
+  host: "suleiman.db.elephantsql.com",
+  database: "kbrgavtx",
+  password: "C9LwU73Mv-zTZndT0IkU4-yDP32R5uWC",
+  port: 5432,
+});
+client.connect();
+
+const publicVapid =
+  "BLptAS_pUeuq60oIVLvG72rq98fdkPCP04G9Rq_smbivznYdkzoiAKUjtm-MaIVcjdEmhn_IE3dKr_GfSm3pPcY";
+
+const PrivateVapid = "QjPXVC6lG5ZnKV-LO9mZBbv_iI9_eNVWmrGfnZq2DbM";
+
+webpush.setVapidDetails("mailto:test@example.com", publicVapid, PrivateVapid);
 
 let movies1: any = [
   {
@@ -66,34 +89,36 @@ const RootSchema = new GraphQLObjectType({
         name: { type: GraphQLString },
         gener: { type: GraphQLString },
       },
-      resolve: (parent, args) => {
+      resolve: async (parent, args) => {
         if (args.id) {
-          return movies1.filter((movie: any) => {
-            console.log(args.id === movie.id);
-            return movie.id === args.id;
-          });
+          let res = await client.query("select * from movies where id = $1", [
+            args.id,
+          ]);
+          console.log(res.rows);
+          return res.rows;
         }
         if (args.gener) {
-          let res = movies1.filter((movie: any) => {
-            console.log(args.gener, movie.gener);
-            return movie.gener === args.gener;
-          });
-          console.log(res);
-          return res;
+          let res = await client.query(
+            "select * from movies where gener = $1",
+            [args.gener]
+          );
+          console.log(res.rows);
+          return res.rows;
         }
-        let res = movies1.filter((movie: any) => {
-          return movie.name === args.name;
-        });
-        if (res) {
-          return res;
-        }
+        let res = await client.query("select * from movies where name = $1", [
+          args.name,
+        ]);
+        console.log(res.rows);
+        return res.rows;
       },
     },
     movies: {
       type: new GraphQLList(MovieType),
       description: "array of movies",
-      resolve: () => {
-        return movies1;
+      resolve: async () => {
+        let res = await client.query("select * from movies LIMIT 5;");
+        console.log(res.rows);
+        return res.rows;
       },
     },
   }),
@@ -111,15 +136,50 @@ const RootMutationType = new GraphQLObjectType({
         gener: { type: GraphQLString },
         director: { type: GraphQLString },
       },
-      resolve: (parent, args) => {
-        const book = {
-          id: movies1.length + 1,
-          gener: args.gener,
-          director: args.director,
-          name: args.name,
-        };
-        movies1.push(book);
-        return book;
+      resolve: async (parent, args) => {
+        let res = await client.query(
+          "insert into movies (name,director,gener) values ($1, $2 ,$3 ) RETURNING *",
+          [args.name, args.director, args.gener]
+        );
+        console.log(res.rows[0]);
+        return res.rows[0];
+      },
+    },
+    deleteMovie: {
+      type: GraphQLList(MovieType),
+      description: "delete a movie",
+      args: {
+        id: { type: GraphQLString },
+      },
+      resolve: async (parent, args) => {
+        console.log("im delete");
+        let res = await client.query(
+          "DELETE FROM movies where id = $1 RETURNING *",
+          [args.id]
+        );
+        console.log(res.rows);
+
+        return res.rows;
+      },
+    },
+    EditMovie: {
+      type: GraphQLList(MovieType),
+      description: "delete a movie",
+      args: {
+        id: { type: GraphQLString },
+        name: { type: GraphQLString },
+        director: { type: GraphQLString },
+        gener: { type: GraphQLString },
+      },
+      resolve: async (parent, args) => {
+        console.log("im editing");
+        let res = await client.query(
+          "UPDATE movies SET name = $1,director = $2, gener=$3 where id = $4 RETURNING *",
+          [args.name, args.director, args.gener, args.id]
+        );
+        console.log(res.rows);
+
+        return res.rows;
       },
     },
   }),
@@ -138,8 +198,28 @@ app.use(
   })
 );
 
-app.get("/", (req, res) => res.send("Express + TypeScript Server"));
+app.post("/subscribe", (req, res) => {
+  // Get pushSubscription object
+  const subscription = req.body;
+
+  // Send 201 - resource created
+  res.status(201).json({});
+
+  // Create payload
+  const payload = JSON.stringify({ title: "Push Test" });
+
+  // Pass object into sendNotification
+  webpush
+    .sendNotification(subscription, payload)
+    .catch((err) => console.error(err));
+});
+
+app.get("/", (req, res) => {
+  client.query("SELECT NOW()", (err: any, res: any) => {
+    console.log(res.rows[0]);
+  });
+});
 
 app.listen(process.env.PORT || PORT, () => {
-  console.log(`⚡️[server]: Server is running at https://localhost:${PORT}`);
+  console.log(`⚡️[server]: Server is running at http://localhost:${PORT}`);
 });
